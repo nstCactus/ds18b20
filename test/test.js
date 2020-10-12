@@ -3,12 +3,15 @@
  * @date 08/10/2020 02:33
  */
 const ds18b20 = require('../dist');
-const assert = require('assert');
 const path = require('path');
+const chai = require('chai');
+const assert = chai.assert;
+const chaiAsPromised = require('chai-as-promised');
+chai.use(chaiAsPromised);
 
 describe('ds18b20', function () {
   describe('#list()', function () {
-    it('should return the id of sensors know by the 1-wire bus master', async function () {
+    it('should return the id of sensors known by the 1-wire bus master', async function () {
       // noinspection ES6MissingAwait
       for (const { dir, expected } of [
         //@formatter:off
@@ -20,7 +23,7 @@ describe('ds18b20', function () {
       ]) {
         ds18b20.setW1Directory(path.join(__dirname, `data/${dir}`));
         let sensorIds = await ds18b20.list();
-        assert.deepStrictEqual(sensorIds, expected);
+        assert.deepEqual(sensorIds, expected);
       }
     });
   });
@@ -66,19 +69,20 @@ describe('ds18b20', function () {
       }
     });
 
-    it('should return null the value could not be read.', async function () {
-      for (const { dir, id } of [
+    it('should return an error if the value could not be read.',  function () {
+      for (const { dir, id, error } of [
         //@formatter:off
-        { dir: '0-devices',                id: '28-011111111111' },
-        { dir: '1-device-crc-zero',        id: '28-011111111111' },
-        { dir: '1-device-no',              id: '28-011111111111' },
-        { dir: '1-device-invalid-content', id: '28-011111111111' },
-        { dir: 'no-devices',               id: '28-011111111111' },
+        { dir: '0-devices',                id: '28-011111111111', error: `ENOENT: no such file or directory` },
+        { dir: '1-device-crc-zero',        id: '28-011111111111', error: 'CRC check failed for temperature reading of the 28-011111111111 sensor' },
+        { dir: '1-device-no',              id: '28-011111111111', error: 'CRC check failed for temperature reading of the 28-011111111111 sensor' },
+        { dir: '1-device-invalid-content', id: '28-011111111111', error: 'Could not parse the temperature reading of the 28-011111111111 sensor' },
+        { dir: 'no-devices',               id: '28-011111111111', error: 'ENOENT: no such file or directory' },
         //@formatter:on
       ]) {
         ds18b20.setW1Directory(path.join(__dirname, `data/${dir}`));
-        let value = await ds18b20.read(id);
-        assert.strictEqual(value, null);
+
+        let promise = ds18b20.read(id);
+        assert.isRejected(promise, error);
       }
     });
   });

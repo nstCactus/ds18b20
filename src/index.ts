@@ -1,9 +1,12 @@
 import path from 'path';
+import { promisify } from 'util';
 import fs from 'fs';
 import roundTo from 'round-to';
 import {sensorFilename, w1Directory} from './utils';
 
 export { setW1Directory } from './utils';
+
+const readFile = promisify(fs.readFile);
 
 const W1_MASTER = 'w1_master_slaves';
 
@@ -14,36 +17,38 @@ const W1_MASTER = 'w1_master_slaves';
 export async function list(): Promise<string[]>
 {
   const filePath = path.join(w1Directory, W1_MASTER);
-  const rawData = await fs.readFileSync(filePath, { encoding: 'utf8' });
 
-  if (rawData.length === 0) {
-    return [];
-  }
-
-  const sensorIds = rawData.split('\n');
-  sensorIds.pop(); // Remove the last item as it's empty
-
-  // Check if slaves have a corresponding file
-  const promises = sensorIds.map(sensorId => new Promise((resolve, reject) => {
-    fs.access(sensorFilename(sensorId), fs.constants.R_OK, (err) => {
-      if (err) {
-        reject(err);
-        return;
-      }
-
-      resolve(sensorId);
-    });
-  }));
-
-  // @ts-ignore
-  const results = await Promise.allSettled(promises);
-  return results.reduce((validSensorIds: string[], result: any) => {
-    if (result.value) {
-      validSensorIds.push(result.value);
+  return readFile(filePath, { encoding: 'utf8' }).then(rawData => {
+    if (rawData.length === 0) {
+      return [];
     }
 
-    return validSensorIds;
-  }, []);
+    const sensorIds = rawData.split('\n');
+    sensorIds.pop(); // Remove the last item as it's empty
+
+    // Check if slaves have a corresponding file
+    const promises = sensorIds.map(sensorId => new Promise((resolve, reject) => {
+      fs.access(sensorFilename(sensorId), fs.constants.R_OK, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        resolve(sensorId);
+      });
+    }));
+
+    // @ts-ignore
+    return Promise.allSettled(promises).then(results => {
+      return results.reduce((validSensorIds: string[], result: any) => {
+        if (result.value) {
+          validSensorIds.push(result.value);
+        }
+
+        return validSensorIds;
+      }, []);
+    });
+  });
 }
 
 /**
@@ -56,31 +61,38 @@ export async function list(): Promise<string[]>
  * @error Error If the sensor has been disconnected
  * @error Error If the value could not be parsed
  */
-export async function read(id: string, precision: number = Infinity): Promise<number|null>
+export async function read(id: string, precision: number = Infinity): Promise<number|string>
 {
-  try{
-    const content = await fs.readFileSync(sensorFilename(id), 'utf8');
-    const lines = content.split('\n');
+  return new Promise(((resolve, reject) => {
+    fs.readFile(sensorFilename(id), 'utf8', (err, content) => {
+      if (err) {
+        reject(err);
+        return;
+      }
 
-    // crc=00 indicates the sensor has been disconnected
-    if (lines[0].indexOf('crc=00') >= 0) {
-      return null;
-    }
+      const lines = content.split('\n');
 
-    if (lines[0].indexOf('YES') === -1) {
-      return null;
-    }
+      // crc=00 indicates the sensor has been disconnected
+      if (lines[0].indexOf('crc=00') >= 0) {
+        reject(`Error: CRC check failed for temperature reading of the ${id} sensor`);
+        return;
+      }
 
-    const result = content.match(/t=(-?\d+)$/m);
-    if (result === null) {
-      return null;
-    }
+      if (lines[0].indexOf('YES') === -1) {
+        reject(`Error: CRC check failed for temperature reading of the ${id} sensor`);
+        return;
+      }
 
-    let temperature = parseInt(result[1], 10) / 1000;
-    temperature = roundTo(temperature, precision);
+      const result = content.match(/t=(-?\d+)$/m);
+      if (result === null) {
+        reject(`Error: Could not parse the temperature reading of the ${id} sensor`);
+        return;
+      }
 
-    return temperature;
-  } catch (error) {
-    return null;
-  }
+      let temperature = parseInt(result[1], 10) / 1000;
+      temperature = roundTo(temperature, precision);
+
+      resolve(temperature);
+    });
+  }));
 }
